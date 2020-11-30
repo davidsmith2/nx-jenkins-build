@@ -1,26 +1,26 @@
 def distributedTasks = [:]
 
 stage("Building Distributed Tasks") {
-  jsTask {
-    checkout scm
-    sh 'yarn install'
+  jsTask("master-node", {
+		checkout scm
+    sh 'npm ci'
 
     distributedTasks << distributed('test', 3)
     distributedTasks << distributed('lint', 3)
     distributedTasks << distributed('build', 3)
-  }
+  })
 }
 
 stage("Run Distributed Tasks") {
   parallel distributedTasks
 }
 
-def jsTask(Closure cl) {
-  node {
-    withEnv(["HOME=${workspace}"]) {
-      docker.image('node:latest').inside('--tmpfs /.config', cl)
+def jsTask(String label, Closure cl) {
+	node(label) {
+    withEnv(["PATH+NODEJS_HOME=${tool 'nodejs-10.23.0'}/bin"]) {
+      cl()
     }
-  }
+	}
 }
 
 def distributed(String target, int bins) {
@@ -32,13 +32,13 @@ def distributed(String target, int bins) {
     def title = "${target} - ${i}"
 
     tasks[title] = {
-      jsTask {
+      jsTask("build-node", {
         stage(title) {
           checkout scm
-          sh 'yarn install'
-          sh "npx nx run-many --target=${target} --projects=${list} --parallel"
+          sh 'npm ci'
+          sh "npx nx run-many --target=${target} --projects=${list} --parallel --maxParallel=2"
         }
-      }
+      })
     }
   }
 

@@ -1,24 +1,59 @@
 def distributedTasks = [:]
 
-stage("Building Distributed Tasks") {
-  jsTask {
-    checkout scm
-    sh 'yarn install'
-
-    distributedTasks << distributed('test', 3)
-    distributedTasks << distributed('lint', 3)
-    distributedTasks << distributed('build', 3)
+pipeline {
+  agent {
+    label 'master-node'
+  }
+  options {
+    skipDefaultCheckout true
+  }
+  stages {
+    stage("Building Distributed Tasks") {
+      steps {
+        script {
+          def checkoutCl = {
+            stage('Checkout') {
+              checkout scm
+            }
+          }
+          def installCl = {
+            stage('Install') {
+              sh 'npm ci'
+            }
+          }
+          def runCl = {
+            stage('Run') {
+              distributedTasks << distributed('test', 3)
+              distributedTasks << distributed('lint', 3)
+              distributedTasks << distributed('build', 3)
+            }
+          }
+          def cleanCl = {
+            stage('Clean') {
+              cleanWs()
+            }
+          }
+          jsTask(checkoutCl, installCl, runCl, cleanCl)
+        }
+      }
+    }
+    stage("Run Distributed Tasks") {
+      steps {
+        script {
+          parallel distributedTasks
+        }
+      }
+    }
   }
 }
 
-stage("Run Distributed Tasks") {
-  parallel distributedTasks
-}
-
-def jsTask(Closure cl) {
-  node {
-    withEnv(["HOME=${workspace}"]) {
-      docker.image('node:latest').inside('--tmpfs /.config', cl)
+def jsTask(Closure checkoutCl, Closure installCl, Closure runCl, Closure cleanCl) {
+  node("build-node") {
+    withEnv(["PATH+NODEJS_HOME=${tool 'nodejs-10.23.0'}/bin"]) {
+      checkoutCl()
+      installCl()
+      runCl()
+      cleanCl()
     }
   }
 }
@@ -31,14 +66,29 @@ def distributed(String target, int bins) {
     def list = jobRun.join(',')
     def title = "${target} - ${i}"
 
-    tasks[title] = {
-      jsTask {
-        stage(title) {
-          checkout scm
-          sh 'yarn install'
-          sh "npx nx run-many --target=${target} --projects=${list} --parallel"
-        }
+    def checkoutCl = {
+      stage("${title} - Checkout") {
+        checkout scm
       }
+    }
+    def installCl = {
+      stage("${title} - Install") {
+        sh 'npm ci'
+      }
+    }
+    def runCl = {
+      stage("${title} - Run") {
+        sh "npx nx run-many --target=${target} --projects=${list}"
+      }
+    }
+    def cleanCl = {
+      stage("${title} - Clean") {
+        cleanWs()
+      }
+    }
+
+    tasks[title] = {
+      jsTask(checkoutCl, installCl, runCl, cleanCl)
     }
   }
 
